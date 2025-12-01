@@ -8,8 +8,6 @@
 
 #if defined(_WIN32)
 #include <malloc.h>
-#else
-#include <cstdlib>
 #endif
 
 namespace util {
@@ -36,7 +34,9 @@ namespace util {
         std::shared_ptr<T> create(Args&&... args) {
             std::lock_guard lock(mutex);
             if (freeObjects.empty()) {
-                allocateNew();
+                if (!allocateNew()) {
+                    return std::make_shared<T>(std::forward<Args>(args)...);
+                }
             }
             auto ptr = freeObjects.front();
             freeObjects.pop();
@@ -52,24 +52,20 @@ namespace util {
         std::queue<void*> freeObjects;
         std::mutex mutex;
 
-        void allocateNew() {
-            // Use posix_memalign on POSIX systems as aligned_alloc has stricter requirements
-            constexpr size_t alignment = alignof(T) < sizeof(void*) ? sizeof(void*) : alignof(T);
-            constexpr size_t size = sizeof(T);
-            void* rawPtr = nullptr;
+        bool allocateNew() {
+            std::unique_ptr<void, AlignedDeleter> ptr(
 #if defined(_WIN32)
-            rawPtr = _aligned_malloc(size, alignment);
+                _aligned_malloc(sizeof(T), alignof(T))
 #else
-            if (posix_memalign(&rawPtr, alignment, size) != 0) {
-                rawPtr = nullptr;
-            }
+                std::aligned_alloc(alignof(T), sizeof(T))
 #endif
-            if (rawPtr == nullptr) {
-                throw std::bad_alloc();
+            );
+            if (ptr == nullptr) {
+                return false;
             }
-            std::unique_ptr<void, AlignedDeleter> ptr(rawPtr);
             freeObjects.push(ptr.get());
             objects.push_back(std::move(ptr));
+            return true;
         }
     };
 }
