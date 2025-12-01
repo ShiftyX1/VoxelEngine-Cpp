@@ -4,9 +4,12 @@
 #include <mutex>
 #include <vector>
 #include <queue>
+#include <new>
 
 #if defined(_WIN32)
 #include <malloc.h>
+#else
+#include <cstdlib>
 #endif
 
 namespace util {
@@ -50,13 +53,21 @@ namespace util {
         std::mutex mutex;
 
         void allocateNew() {
-            std::unique_ptr<void, AlignedDeleter> ptr(
+            // Use posix_memalign on POSIX systems as aligned_alloc has stricter requirements
+            constexpr size_t alignment = alignof(T) < sizeof(void*) ? sizeof(void*) : alignof(T);
+            constexpr size_t size = sizeof(T);
+            void* rawPtr = nullptr;
 #if defined(_WIN32)
-                _aligned_malloc(sizeof(T), alignof(T))
+            rawPtr = _aligned_malloc(size, alignment);
 #else
-                std::aligned_alloc(alignof(T), sizeof(T))
+            if (posix_memalign(&rawPtr, alignment, size) != 0) {
+                rawPtr = nullptr;
+            }
 #endif
-            );
+            if (rawPtr == nullptr) {
+                throw std::bad_alloc();
+            }
+            std::unique_ptr<void, AlignedDeleter> ptr(rawPtr);
             freeObjects.push(ptr.get());
             objects.push_back(std::move(ptr));
         }
